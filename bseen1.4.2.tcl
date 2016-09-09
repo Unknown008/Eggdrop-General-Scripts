@@ -66,6 +66,16 @@ set bs(smartsearch) 1
 #bs(logqueries) is used to log DCC/MSG/PUB queries
 set bs(logqueries) 1
 
+#bs(notify) is used to notify a user who was the target of a !seen.
+# Output: USER was looking for you XXX ago
+# 1 = on
+set bs(notify) 1
+
+
+#bs(notifylist) is the list of users to notify from the above setting. Only relevant when above
+#  setting is on
+set bs(notifylist) [list]
+
 #bs(path) is used to indicate what path to save the database and backup to.  
 #  Setting to "" will cause the script to be saved in the same path as the eggdrop executable
 #  If you set it, use the full path, and make sure you terminate w/ a "/".  
@@ -481,6 +491,14 @@ proc bs_output {chan nick data no} {
       set matches [string trimleft $matches " "]
       set len [llength $matches]
       if {$len == 1} {
+        # If notify setting on, add $data to notifylist
+        if {$bs(notify)} {
+          set idx [lsearch -index 0 $bs(notifylist) $data]
+          if {$idx > -1} {
+            set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+          }
+          lappend bs(notifylist) [list $data $nick [unixtime]]
+        }
         return [bs_search $chan [lindex $matches 0]]
       }
       if {$len > 99} {
@@ -489,6 +507,14 @@ proc bs_output {chan nick data no} {
       set matches [bs_sort $matches]
       set key [lindex $matches 0]
       if {[string tolower $key] == [string tolower $data]} {
+        # If notify setting on, add $data to notifylist
+        if {$bs(notify)} {
+          set idx [lsearch -index 0 $bs(notifylist) $data]
+          if {$idx > -1} {
+            set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+          }
+          lappend bs(notifylist) [list $data $nick [unixtime]]
+        }
         return [bs_search $chan $key]
       }
       if {$len <= 5} {
@@ -504,6 +530,14 @@ proc bs_output {chan nick data no} {
   }
   set temp [bs_search $chan $data]
   if {$temp != 0} {
+    # If notify setting on, add $data to notifylist
+    if {$bs(notify) && $temp ne "error"} {
+      set idx [lsearch -index 0 $bs(notifylist) $data]
+      if {$idx > -1} {
+        set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+      }
+      lappend bs(notifylist) [list $data $nick [unixtime]]
+    }
     return $temp
   } {
     #$data not found in $bs_list, so search userfile
@@ -516,6 +550,14 @@ proc bs_output {chan nick data no} {
         set chan "-secret-"
       } {
         set chan [lindex $seen 1]
+      }
+      # If notify setting on, add $data to notifylist
+      if {$bs(notify) && $temp ne "error"} {
+        set idx [lsearch -index 0 $bs(notifylist) $data]
+        if {$idx > -1} {
+          set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+        }
+        lappend bs(notifylist) [list $data $nick [unixtime]]
       }
       return [concat $nick, $data was last seen on $chan [bs_when [lindex $seen 0]] ago.]
     }
@@ -981,4 +1023,44 @@ proc bs_help_dcc {hand idx args} {
     } 
   }
   return 1
+}
+
+if {$bs(notify) == 1} {
+  bind join -|- * bs_notify
+  bind nick -|- * bs_nicknotify
+  proc bs_notify {nick uhost hand chan} {
+    global bs
+    set idx [lsearch -index 0 -nocase $bs(notifylist) $nick]
+    if {$idx > -1} {
+      set info [lindex $bs(notifylist) $idx]
+      foreach {target requester time} $info {}
+      
+      if {[lsearch $bs(quiet_chan) [string tolower $chan]] > -1 || [string first "#" $chan] != 0} {
+        set out "notice $nick"
+      } else {
+        set out "privmsg $chan"
+      }
+      puthelp "$out :$requester was looking for you [bs_when $time] ago."
+      
+      set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+    }
+  }
+  
+  proc bs_nicknotify {oldnick uhost hand chan nick} {
+    global bs
+    set idx [lsearch -index 0 -nocase $bs(notifylist) $nick]
+    if {$idx > -1} {
+      set info [lindex $bs(notifylist) $idx]
+      foreach {target requester time} $info {}
+      
+      if {[lsearch $bs(quiet_chan) [string tolower $chan]] > -1 || [string first "#" $chan] != 0} {
+        set out "notice $nick"
+      } else {
+        set out "privmsg $chan"
+      }
+      puthelp "$out :$requester was looking for you [bs_when $time] ago."
+      
+      set bs(notifylist) [lreplace $bs(notifylist) $idx $idx]
+    }
+  }
 }
